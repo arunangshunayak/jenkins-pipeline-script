@@ -1,0 +1,101 @@
+pipeline {
+   agent any
+   stages {
+       stage('Code Cloning') {
+           steps {
+       checkout([$class: 'GitSCM', branches: [[name: '*/master']], userRemoteConfigs: [[credentialsId: '', url: 'git@gitlab.com:arunangshu_ops/spring3hibernate.git']]])
+           sh "mvn compile"
+           sh 'echo "Compiled Successfully"'
+           }
+       }
+       stage('Code Stability Check') {
+           steps {
+       sh "mvn install"
+           sh 'echo "Stability Checked"'
+           }
+       }
+       stage('Code Quality Check'){
+           steps{
+           sh "mvn findbugs:findbugs"
+           sh 'echo "Quality Checked"'
+           }
+       }
+       stage('Code Coverage Check'){
+        steps{
+           sh "mvn cobertura:cobertura "
+           sh 'echo "Coverage Checked"'
+        }
+        }
+        stage('Code Vulnerablity check'){
+        steps{
+        echo "Snyk Security checking Vulnerability "
+        sh "mvn install"
+        sh "snyk monitor" 
+       
+       //snykSecurity failOnIssues: false, snykInstallation: 'snykarun', snykTokenId: 'snykarun'
+        }
+        }
+        stage('Email Notification')
+        {
+            steps{wrap([$class: 'BuildUser'])
+           {
+               emailext body: "${currentBuild.currentResult}: Job ${JOB_NAME} build ${BUILD_NUMBER}\n More info at: ${env.BUILD_URL}\n User: ${BUILD_USER}",
+                recipientProviders: [[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider']],
+                subject: 'Status'
+           }
+            }
+        }
+        stage('Slack Notification')
+        {
+            steps{
+                wrap([$class: 'BuildUser'])
+           {
+           slackSend (message: " Job ${env.JOB_NAME} [${env.BUILD_NUMBER}]\n More info at: (${env.BUILD_URL})\n User: ${BUILD_USER}")
+           }
+            }
+        }
+        stage('Approval For Deployment'){
+            input {
+               message "Proceed for Deployment??"
+               ok "Ok, Proceed"
+              }
+               steps{
+                deploy adapters: [tomcat8(credentialsId: 'tomcatscriptcredentials', path: '', url: 'http://127.0.0.1:8086/')], contextPath: null, war: '*/*.war'
+               }
+        }
+        
+        stage('Approval for Rollback'){
+            input {
+               message "Do you want to rollback to previous version"
+               ok "Ok, Proceed"
+              }
+                steps{
+                sh "git checkout v1.2 -b v1.2"
+                sh "mvn package"
+                deploy adapters: [tomcat8(credentialsId: 'tomcatscriptcredentials', path: '', url: 'http://127.0.0.1:8086/')], contextPath: null, war: '*/*.war'
+               }
+        }
+}
+       
+       
+    post {
+        success {
+          wrap([$class: 'BuildUser'])
+           {
+            emailext body: "${currentBuild.currentResult}: Job ${JOB_NAME} build ${BUILD_NUMBER}\n More info at: ${env.BUILD_URL}\n User: ${BUILD_USER}",
+            recipientProviders: [[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider']],
+            subject: 'Test'
+            slackSend (message: "SUCCESSFUL: Job ${env.JOB_NAME} [${env.BUILD_NUMBER}]\n More info at: (${env.BUILD_URL})\n User: ${BUILD_USER}")
+                }
+       }
+       failure {
+          wrap([$class: 'BuildUser'])
+           {
+           emailext body: "${currentBuild.currentResult}: Job ${JOB_NAME} build ${BUILD_NUMBER}\n More info at: ${env.BUILD_URL}\n User: ${BUILD_USER}",
+           recipientProviders: [[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider']],
+           subject: 'Test'
+           slackSend (message: "${currentBuild.currentResult}: Job ${env.JOB_NAME} [${env.BUILD_NUMBER}]\n More info at: (${env.BUILD_URL})\n User: ${BUILD_USER}")
+           }
+       }
+    }
+}
